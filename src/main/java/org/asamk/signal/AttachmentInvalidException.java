@@ -1,8 +1,7 @@
 package org.asamk.signal;
 
-import org.freedesktop.dbus.exceptions.DBusExecutionException;
 
-public class AttachmentInvalidException extends DBusExecutionException {
+public class AttachmentInvalidException extends Exception {
     public AttachmentInvalidException(String message) {
         super(message);
     }

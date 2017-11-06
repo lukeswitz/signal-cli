@@ -2,22 +2,20 @@ package org.asamk;
 
 import org.asamk.signal.AttachmentInvalidException;
 import org.asamk.signal.GroupNotFoundException;
-import org.freedesktop.dbus.DBusInterface;
-import org.freedesktop.dbus.DBusSignal;
-import org.freedesktop.dbus.exceptions.DBusException;
+import org.asamk.signal.NotAGroupMemberException;
 import org.whispersystems.signalservice.api.push.exceptions.EncapsulatedExceptions;
 
 import java.io.IOException;
 import java.util.List;
 
-public interface Signal extends DBusInterface {
+public interface Signal {
     void sendMessage(String message, List<String> attachments, String recipient) throws EncapsulatedExceptions, AttachmentInvalidException, IOException;
 
     void sendMessage(String message, List<String> attachments, List<String> recipients) throws EncapsulatedExceptions, AttachmentInvalidException, IOException;
 
     void sendEndSessionMessage(List<String> recipients) throws IOException, EncapsulatedExceptions;
 
-    void sendGroupMessage(String message, List<String> attachments, byte[] groupId) throws EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, IOException;
+    void sendGroupMessage(String message, List<String> attachments, byte[] groupId) throws EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, IOException, NotAGroupMemberException;
 
     String getContactName(String number);
 
@@ -27,17 +25,16 @@ public interface Signal extends DBusInterface {
 
     List<String> getGroupMembers(byte[] groupId);
 
-    byte[] updateGroup(byte[] groupId, String name, List<String> members, String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException;
+    byte[] updateGroup(byte[] groupId, String name, List<String> members, String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, NotAGroupMemberException;
 
-    class MessageReceived extends DBusSignal {
+    class MessageReceived  {
         private long timestamp;
         private String sender;
         private byte[] groupId;
         private String message;
         private List<String> attachments;
 
-        public MessageReceived(String objectpath, long timestamp, String sender, byte[] groupId, String message, List<String> attachments) throws DBusException {
-            super(objectpath, timestamp, sender, groupId, message, attachments);
+        public MessageReceived(String objectpath, long timestamp, String sender, byte[] groupId, String message, List<String> attachments) throws Exception {
             this.timestamp = timestamp;
             this.sender = sender;
             this.groupId = groupId;
@@ -66,12 +63,11 @@ public interface Signal extends DBusInterface {
         }
     }
 
-    class ReceiptReceived extends DBusSignal {
+    class ReceiptReceived {
         private long timestamp;
         private String sender;
 
-        public ReceiptReceived(String objectpath, long timestamp, String sender) throws DBusException {
-            super(objectpath, timestamp, sender);
+        public ReceiptReceived(String objectpath, long timestamp, String sender) throws Exception {
             this.timestamp = timestamp;
             this.sender = sender;
         }

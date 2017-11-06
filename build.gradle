@@ -1,15 +1,33 @@
-apply plugin: 'java'
-apply plugin: 'application'
-apply plugin: 'eclipse'
+apply plugin: 'com.android.library'
 
 sourceCompatibility = JavaVersion.VERSION_1_7
 targetCompatibility = JavaVersion.VERSION_1_7
 
-mainClassName = 'org.asamk.signal.Main'
+android {
+    compileSdkVersion project.ext.compileSdkVersion
+    buildToolsVersion project.ext.buildToolsVersion
+
+    defaultConfig {
+        minSdkVersion project.ext.minSdkVersion
+        targetSdkVersion project.ext.targetSdkVersion
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+    }
+
+    dependencies {
+        compile project.ext.appcompat
+    }
+    buildToolsVersion '26.0.2'
+}
+
+
 
 version = '0.5.6'
-
-compileJava.options.encoding = 'UTF-8'
 
 repositories {
     maven {
@@ -22,15 +40,5 @@ dependencies {
     compile 'com.github.turasa:signal-service-java:2.6.5_unofficial_1'
     compile 'org.bouncycastle:bcprov-jdk15on:1.55'
     compile 'net.sourceforge.argparse4j:argparse4j:0.7.0'
-    compile 'org.freedesktop.dbus:dbus-java:2.7.0'
 }
 
-jar {
-    manifest {
-        attributes(
-                'Implementation-Title': project.name,
-                'Implementation-Version': project.version,
-                'Main-Class': project.mainClassName,
-        )
-    }
-}

@@ -16,6 +16,8 @@
  */
 package org.asamk.signal;
 
+import android.webkit.MimeTypeMap;
+
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -25,6 +27,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import org.apache.http.util.TextUtils;
 import org.asamk.Signal;
 import org.asamk.signal.storage.contacts.ContactInfo;
@@ -75,17 +78,10 @@ import java.net.URLEncoder;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static java.nio.file.attribute.PosixFilePermission.*;
 
 class Manager implements Signal {
     private final static String URL = "https://textsecure-service.whispersystems.org";
@@ -174,23 +170,42 @@ class Manager implements Signal {
         return new File(cachePath + "/" + now + "_" + timestamp);
     }
 
-    private static void createPrivateDirectories(String path) throws IOException {
-        final Path file = new File(path).toPath();
+    private static void copyFile (File source, File dest) throws IOException {
+        InputStream is = null;
+        OutputStream os = null;
         try {
-            Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
-            Files.createDirectories(file, PosixFilePermissions.asFileAttribute(perms));
+            is = new FileInputStream(source);
+            os = new FileOutputStream(dest);
+            byte[] buffer = new byte[1024];
+            int length;
+            while ((length = is.read(buffer)) > 0) {
+                os.write(buffer, 0, length);
+            }
+        } finally {
+            is.close();
+            os.close();
+        }
+    }
+
+    private static void createPrivateDirectories(String path) throws IOException {
+        final File file = new File(path);
+        try {
+//            Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
+            file.mkdirs();
+            //Files.createDirectories(file, PosixFilePermissions.asFileAttribute(perms));
         } catch (UnsupportedOperationException e) {
-            Files.createDirectories(file);
+           // Files.createDirectories(file);
         }
     }
 
     private static void createPrivateFile(String path) throws IOException {
-        final Path file = new File(path).toPath();
+        final File file = new File(path);
         try {
-            Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE);
-            Files.createFile(file, PosixFilePermissions.asFileAttribute(perms));
+        //    Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE);
+           // Files.createFile(file, PosixFilePermissions.asFileAttribute(perms));
+            file.mkdirs();
         } catch (UnsupportedOperationException e) {
-            Files.createFile(file);
+          //  Files.createFile(file);
         }
     }
 
@@ -307,7 +322,7 @@ class Manager implements Signal {
                 if (!avatarFile.exists() && attachmentFile.exists()) {
                     try {
                         createPrivateDirectories(avatarsPath);
-                        Files.copy(attachmentFile.toPath(), avatarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                      //TODO  Files.copy(attachmentFile.toPath(), avatarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                     } catch (Exception e) {
                         // Ignore
                     }
@@ -542,7 +557,15 @@ class Manager implements Signal {
     private static SignalServiceAttachmentStream createAttachment(File attachmentFile) throws IOException {
         InputStream attachmentStream = new FileInputStream(attachmentFile);
         final long attachmentSize = attachmentFile.length();
-        String mime = Files.probeContentType(attachmentFile.toPath());
+       // String mime = MimFiles.probeContentType(attachmentFile.toPath());
+        String mime = null;
+
+        if (attachmentFile.getName().contains("."))
+        {
+            String[] tokens = attachmentFile.getName().split("\\.(?=[^\\.]+$)");
+            mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(tokens[1]);
+        }
+
         if (mime == null) {
             mime = "application/octet-stream";
         }
@@ -588,7 +611,7 @@ class Manager implements Signal {
     @Override
     public void sendGroupMessage(String messageText, List<String> attachments,
                                  byte[] groupId)
-            throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
+            throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, NotAGroupMemberException {
         final SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder().withBody(messageText);
         if (attachments != null) {
             messageBuilder.withAttachments(getSignalServiceAttachments(attachments));
@@ -612,7 +635,7 @@ class Manager implements Signal {
         sendMessage(messageBuilder, membersSend);
     }
 
-    public void sendQuitGroupMessage(byte[] groupId) throws GroupNotFoundException, IOException, EncapsulatedExceptions {
+    public void sendQuitGroupMessage(byte[] groupId) throws GroupNotFoundException, IOException, EncapsulatedExceptions, NotAGroupMemberException {
         SignalServiceGroup group = SignalServiceGroup.newBuilder(SignalServiceGroup.Type.QUIT)
                 .withId(groupId)
                 .build();
@@ -639,7 +662,7 @@ class Manager implements Signal {
         return buf.toString();
     }
 
-    public byte[] sendUpdateGroupMessage(byte[] groupId, String name, Collection<String> members, String avatarFile) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
+    public byte[] sendUpdateGroupMessage(byte[] groupId, String name, Collection<String> members, String avatarFile) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, NotAGroupMemberException {
         GroupInfo g;
         if (groupId == null) {
             // Create new group
@@ -684,7 +707,8 @@ class Manager implements Signal {
         if (avatarFile != null) {
             createPrivateDirectories(avatarsPath);
             File aFile = getGroupAvatarFile(g.groupId);
-            Files.copy(Paths.get(avatarFile), aFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+          //  Files.copy(Paths.get(avatarFile), aFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            copyFile(new File(avatarFile), aFile);
         }
 
         groupStore.updateGroup(g);
@@ -698,7 +722,7 @@ class Manager implements Signal {
         return g.groupId;
     }
 
-    private void sendUpdateGroupMessage(byte[] groupId, String recipient) throws IOException, EncapsulatedExceptions {
+    private void sendUpdateGroupMessage(byte[] groupId, String recipient) throws IOException, EncapsulatedExceptions, NotAGroupMemberException, GroupNotFoundException, AttachmentInvalidException {
         if (groupId == null) {
             return;
         }
@@ -716,7 +740,7 @@ class Manager implements Signal {
         sendMessage(messageBuilder, membersSend);
     }
 
-    private SignalServiceDataMessage.Builder getGroupUpdateMessageBuilder(GroupInfo g) {
+    private SignalServiceDataMessage.Builder getGroupUpdateMessageBuilder(GroupInfo g) throws AttachmentInvalidException {
         SignalServiceGroup.Builder group = SignalServiceGroup.newBuilder(SignalServiceGroup.Type.UPDATE)
                 .withId(g.groupId)
                 .withName(g.name)
@@ -825,7 +849,7 @@ class Manager implements Signal {
     }
 
     @Override
-    public byte[] updateGroup(byte[] groupId, String name, List<String> members, String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
+    public byte[] updateGroup(byte[] groupId, String name, List<String> members, String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException, NotAGroupMemberException {
         if (groupId.length == 0) {
             groupId = null;
         }
@@ -1025,6 +1049,10 @@ class Manager implements Signal {
                             e.printStackTrace();
                         } catch (NotAGroupMemberException e) {
                             // We have left this group, so don't send a group update message
+                        } catch (GroupNotFoundException e) {
+                            e.printStackTrace();
+                        } catch (AttachmentInvalidException e) {
+                            e.printStackTrace();
                         }
                     }
                     break;
@@ -1099,8 +1127,9 @@ class Manager implements Signal {
                 save();
                 handler.handleMessage(envelope, content, null);
                 try {
-                    Files.delete(fileEntry.toPath());
-                } catch (IOException e) {
+                    //Files.delete(fileEntry.toPath());
+                    fileEntry.delete();
+                } catch (Exception e) {
                     System.err.println("Failed to delete cached message file “" + fileEntry + "”: " + e.getMessage());
                 }
             }
@@ -1158,7 +1187,8 @@ class Manager implements Signal {
                     File cacheFile = null;
                     try {
                         cacheFile = getMessageCacheFile(envelope.getSource(), now, envelope.getTimestamp());
-                        Files.delete(cacheFile.toPath());
+                       // Files.delete(cacheFile.toPath());
+                        cacheFile.delete();
                         // Try to delete directory if empty
                         new File(getMessageCachePath()).delete();
                     } catch (IOException e) {
@@ -1207,33 +1237,35 @@ class Manager implements Signal {
                     File tmpFile = null;
                     try {
                         tmpFile = Util.createTempFile();
-                        try (InputStream attachmentAsStream = retrieveAttachmentAsStream(syncMessage.getGroups().get().asPointer(), tmpFile)) {
-                            DeviceGroupsInputStream s = new DeviceGroupsInputStream(attachmentAsStream);
-                            DeviceGroup g;
-                            while ((g = s.read()) != null) {
-                                GroupInfo syncGroup = groupStore.getGroup(g.getId());
-                                if (syncGroup == null) {
-                                    syncGroup = new GroupInfo(g.getId());
-                                }
-                                if (g.getName().isPresent()) {
-                                    syncGroup.name = g.getName().get();
-                                }
-                                syncGroup.members.addAll(g.getMembers());
-                                syncGroup.active = g.isActive();
 
-                                if (g.getAvatar().isPresent()) {
-                                    retrieveGroupAvatarAttachment(g.getAvatar().get(), syncGroup.groupId);
-                                }
-                                groupStore.updateGroup(syncGroup);
+                        InputStream attachmentAsStream = retrieveAttachmentAsStream(syncMessage.getGroups().get().asPointer(), tmpFile);
+                        DeviceGroupsInputStream s = new DeviceGroupsInputStream(attachmentAsStream);
+                        DeviceGroup g;
+                        while ((g = s.read()) != null) {
+                            GroupInfo syncGroup = groupStore.getGroup(g.getId());
+                            if (syncGroup == null) {
+                                syncGroup = new GroupInfo(g.getId());
                             }
+                            if (g.getName().isPresent()) {
+                                syncGroup.name = g.getName().get();
+                            }
+                            syncGroup.members.addAll(g.getMembers());
+                            syncGroup.active = g.isActive();
+
+                            if (g.getAvatar().isPresent()) {
+                                retrieveGroupAvatarAttachment(g.getAvatar().get(), syncGroup.groupId);
+                            }
+                            groupStore.updateGroup(syncGroup);
                         }
+
                     } catch (Exception e) {
                         e.printStackTrace();
                     } finally {
                         if (tmpFile != null) {
                             try {
-                                Files.delete(tmpFile.toPath());
-                            } catch (IOException e) {
+                                //Files.delete(tmpFile.toPath());
+                                tmpFile.delete();
+                            } catch (Exception e) {
                                 System.err.println("Failed to delete received groups temp file “" + tmpFile + "”: " + e.getMessage());
                             }
                         }
@@ -1247,7 +1279,7 @@ class Manager implements Signal {
                     try {
                         tmpFile = Util.createTempFile();
                         final ContactsMessage contactsMessage = syncMessage.getContacts().get();
-                        try (InputStream attachmentAsStream = retrieveAttachmentAsStream(contactsMessage.getContactsStream().asPointer(), tmpFile)) {
+                            InputStream attachmentAsStream = retrieveAttachmentAsStream(contactsMessage.getContactsStream().asPointer(), tmpFile);
                             DeviceContactsInputStream s = new DeviceContactsInputStream(attachmentAsStream);
                             if (contactsMessage.isComplete()) {
                                 contactStore.clear();
@@ -1271,14 +1303,15 @@ class Manager implements Signal {
                                     retrieveContactAvatarAttachment(c.getAvatar().get(), contact.number);
                                 }
                             }
-                        }
+
                     } catch (Exception e) {
                         e.printStackTrace();
                     } finally {
                         if (tmpFile != null) {
                             try {
-                                Files.delete(tmpFile.toPath());
-                            } catch (IOException e) {
+                                //Files.delete(tmpFile.toPath());
+                                tmpFile.delete();
+                            } catch (Exception e) {
                                 System.err.println("Failed to delete received contacts temp file “" + tmpFile + "”: " + e.getMessage());
                             }
                         }
@@ -1293,56 +1326,55 @@ class Manager implements Signal {
     }
 
     private SignalServiceEnvelope loadEnvelope(File file) throws IOException {
-        try (FileInputStream f = new FileInputStream(file)) {
-            DataInputStream in = new DataInputStream(f);
-            int version = in.readInt();
-            if (version != 1) {
-                return null;
-            }
-            int type = in.readInt();
-            String source = in.readUTF();
-            int sourceDevice = in.readInt();
-            String relay = in.readUTF();
-            long timestamp = in.readLong();
-            byte[] content = null;
-            int contentLen = in.readInt();
-            if (contentLen > 0) {
-                content = new byte[contentLen];
-                in.readFully(content);
-            }
-            byte[] legacyMessage = null;
-            int legacyMessageLen = in.readInt();
-            if (legacyMessageLen > 0) {
-                legacyMessage = new byte[legacyMessageLen];
-                in.readFully(legacyMessage);
-            }
-            return new SignalServiceEnvelope(type, source, sourceDevice, relay, timestamp, legacyMessage, content);
+        FileInputStream f = new FileInputStream(file);
+        DataInputStream in = new DataInputStream(f);
+        int version = in.readInt();
+        if (version != 1) {
+            return null;
         }
+        int type = in.readInt();
+        String source = in.readUTF();
+        int sourceDevice = in.readInt();
+        String relay = in.readUTF();
+        long timestamp = in.readLong();
+        byte[] content = null;
+        int contentLen = in.readInt();
+        if (contentLen > 0) {
+            content = new byte[contentLen];
+            in.readFully(content);
+        }
+        byte[] legacyMessage = null;
+        int legacyMessageLen = in.readInt();
+        if (legacyMessageLen > 0) {
+            legacyMessage = new byte[legacyMessageLen];
+            in.readFully(legacyMessage);
+        }
+        return new SignalServiceEnvelope(type, source, sourceDevice, relay, timestamp, legacyMessage, content);
+
     }
 
     private void storeEnvelope(SignalServiceEnvelope envelope, File file) throws IOException {
-        try (FileOutputStream f = new FileOutputStream(file)) {
-            try (DataOutputStream out = new DataOutputStream(f)) {
-                out.writeInt(1); // version
-                out.writeInt(envelope.getType());
-                out.writeUTF(envelope.getSource());
-                out.writeInt(envelope.getSourceDevice());
-                out.writeUTF(envelope.getRelay());
-                out.writeLong(envelope.getTimestamp());
-                if (envelope.hasContent()) {
-                    out.writeInt(envelope.getContent().length);
-                    out.write(envelope.getContent());
-                } else {
-                    out.writeInt(0);
-                }
-                if (envelope.hasLegacyMessage()) {
-                    out.writeInt(envelope.getLegacyMessage().length);
-                    out.write(envelope.getLegacyMessage());
-                } else {
-                    out.writeInt(0);
-                }
-            }
+        FileOutputStream f = new FileOutputStream(file);
+        DataOutputStream out = new DataOutputStream(f);
+        out.writeInt(1); // version
+        out.writeInt(envelope.getType());
+        out.writeUTF(envelope.getSource());
+        out.writeInt(envelope.getSourceDevice());
+        out.writeUTF(envelope.getRelay());
+        out.writeLong(envelope.getTimestamp());
+        if (envelope.hasContent()) {
+            out.writeInt(envelope.getContent().length);
+            out.write(envelope.getContent());
+        } else {
+            out.writeInt(0);
         }
+        if (envelope.hasLegacyMessage()) {
+            out.writeInt(envelope.getLegacyMessage().length);
+            out.write(envelope.getLegacyMessage());
+        } else {
+            out.writeInt(0);
+        }
+
     }
 
     public File getContactAvatarFile(String number) {
@@ -1387,7 +1419,8 @@ class Manager implements Signal {
     private File retrieveAttachment(SignalServiceAttachmentStream stream, File outputFile) throws IOException, InvalidMessageException {
         InputStream input = stream.getInputStream();
 
-        try (OutputStream output = new FileOutputStream(outputFile)) {
+        try {
+            OutputStream output = new FileOutputStream(outputFile);
             byte[] buffer = new byte[4096];
             int read;
 
@@ -1404,7 +1437,8 @@ class Manager implements Signal {
     private File retrieveAttachment(SignalServiceAttachmentPointer pointer, File outputFile, boolean storePreview) throws IOException, InvalidMessageException {
         if (storePreview && pointer.getPreview().isPresent()) {
             File previewFile = new File(outputFile + ".preview");
-            try (OutputStream output = new FileOutputStream(previewFile)) {
+            try {
+                OutputStream output = new FileOutputStream(previewFile);
                 byte[] preview = pointer.getPreview().get();
                 output.write(preview, 0, preview.length);
             } catch (FileNotFoundException e) {
@@ -1416,8 +1450,10 @@ class Manager implements Signal {
         final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT);
 
         File tmpFile = Util.createTempFile();
-        try (InputStream input = messageReceiver.retrieveAttachment(pointer, tmpFile, MAX_ATTACHMENT_SIZE)) {
-            try (OutputStream output = new FileOutputStream(outputFile)) {
+        try  {
+            InputStream input = messageReceiver.retrieveAttachment(pointer, tmpFile, MAX_ATTACHMENT_SIZE);
+            try {
+                OutputStream output = new FileOutputStream(outputFile);
                 byte[] buffer = new byte[4096];
                 int read;
 
@@ -1430,8 +1466,9 @@ class Manager implements Signal {
             }
         } finally {
             try {
-                Files.delete(tmpFile.toPath());
-            } catch (IOException e) {
+               // Files.delete(tmpFile.toPath());
+                tmpFile.delete();
+            } catch (Exception e) {
                 System.err.println("Failed to delete received attachment temp file “" + tmpFile + "”: " + e.getMessage());
             }
         }
@@ -1453,26 +1490,22 @@ class Manager implements Signal {
         return new SignalServiceAddress(e164number);
     }
 
-    @Override
-    public boolean isRemote() {
-        return false;
-    }
 
     private void sendGroups() throws IOException, UntrustedIdentityException {
         File groupsFile = Util.createTempFile();
 
         try {
-            try (OutputStream fos = new FileOutputStream(groupsFile)) {
+                OutputStream fos = new FileOutputStream(groupsFile);
                 DeviceGroupsOutputStream out = new DeviceGroupsOutputStream(fos);
                 for (GroupInfo record : groupStore.getGroups()) {
                     out.write(new DeviceGroup(record.groupId, Optional.fromNullable(record.name),
                             new ArrayList<>(record.members), createGroupAvatarAttachment(record.groupId),
                             record.active));
                 }
-            }
+
 
             if (groupsFile.exists() && groupsFile.length() > 0) {
-                try (FileInputStream groupsFileStream = new FileInputStream(groupsFile)) {
+                    FileInputStream groupsFileStream = new FileInputStream(groupsFile);
                     SignalServiceAttachmentStream attachmentStream = SignalServiceAttachment.newStreamBuilder()
                             .withStream(groupsFileStream)
                             .withContentType("application/octet-stream")
@@ -1480,12 +1513,13 @@ class Manager implements Signal {
                             .build();
 
                     sendSyncMessage(SignalServiceSyncMessage.forGroups(attachmentStream));
-                }
+
             }
         } finally {
             try {
-                Files.delete(groupsFile.toPath());
-            } catch (IOException e) {
+                //Files.delete(groupsFile.toPath());
+                groupsFile.delete();
+            } catch (Exception e) {
                 System.err.println("Failed to delete groups temp file “" + groupsFile + "”: " + e.getMessage());
             }
         }
@@ -1495,7 +1529,7 @@ class Manager implements Signal {
         File contactsFile = Util.createTempFile();
 
         try {
-            try (OutputStream fos = new FileOutputStream(contactsFile)) {
+                OutputStream fos = new FileOutputStream(contactsFile);
                 DeviceContactsOutputStream out = new DeviceContactsOutputStream(fos);
                 for (ContactInfo record : contactStore.getContacts()) {
                     VerifiedMessage verifiedMessage = null;
@@ -1515,11 +1549,11 @@ class Manager implements Signal {
                     out.write(new DeviceContact(record.number, Optional.fromNullable(record.name),
                             createContactAvatarAttachment(record.number), Optional.fromNullable(record.color),
                             Optional.fromNullable(verifiedMessage), Optional.<byte[]>absent()));
-                }
+
             }
 
             if (contactsFile.exists() && contactsFile.length() > 0) {
-                try (FileInputStream contactsFileStream = new FileInputStream(contactsFile)) {
+                    FileInputStream contactsFileStream = new FileInputStream(contactsFile);
                     SignalServiceAttachmentStream attachmentStream = SignalServiceAttachment.newStreamBuilder()
                             .withStream(contactsFileStream)
                             .withContentType("application/octet-stream")
@@ -1527,12 +1561,13 @@ class Manager implements Signal {
                             .build();
 
                     sendSyncMessage(SignalServiceSyncMessage.forContacts(new ContactsMessage(attachmentStream, true)));
-                }
+
             }
         } finally {
             try {
-                Files.delete(contactsFile.toPath());
-            } catch (IOException e) {
+               // Files.delete(contactsFile.toPath());
+                contactsFile.delete();
+            } catch (Exception e) {
                 System.err.println("Failed to delete contacts temp file “" + contactsFile + "”: " + e.getMessage());
             }
         }

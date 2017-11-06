@@ -1,9 +1,8 @@
 package org.asamk.signal;
 
-import org.freedesktop.dbus.exceptions.DBusExecutionException;
 import org.whispersystems.signalservice.internal.util.Base64;
 
-public class NotAGroupMemberException extends DBusExecutionException {
+public class NotAGroupMemberException extends Exception {
 
     public NotAGroupMemberException(String message) {
         super(message);

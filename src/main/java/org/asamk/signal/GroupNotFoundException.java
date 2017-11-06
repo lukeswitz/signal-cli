@@ -1,9 +1,8 @@
 package org.asamk.signal;
 
-import org.freedesktop.dbus.exceptions.DBusExecutionException;
 import org.whispersystems.signalservice.internal.util.Base64;
 
-public class GroupNotFoundException extends DBusExecutionException {
+public class GroupNotFoundException extends Exception {
 
     public GroupNotFoundException(String message) {
         super(message);

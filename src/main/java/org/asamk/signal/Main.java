@@ -16,6 +16,8 @@
  */
 package org.asamk.signal;
 
+import android.content.Context;
+
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -32,10 +34,6 @@ import org.asamk.signal.storage.contacts.ContactInfo;
 import org.asamk.signal.storage.groups.GroupInfo;
 import org.asamk.signal.storage.protocol.JsonIdentityKeyStore;
 import org.asamk.signal.util.Hex;
-import org.freedesktop.dbus.DBusConnection;
-import org.freedesktop.dbus.DBusSigHandler;
-import org.freedesktop.dbus.exceptions.DBusException;
-import org.freedesktop.dbus.exceptions.DBusExecutionException;
 import org.whispersystems.libsignal.InvalidKeyException;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.*;
@@ -68,78 +66,40 @@ public class Main {
 
     private static final TimeZone tzUTC = TimeZone.getTimeZone("UTC");
 
-    public static void main(String[] args) {
+    private Context mContext;
+    private File mFileHome;
+
+    public Main (Context context)
+    {
         // Workaround for BKS truststore
         Security.insertProviderAt(new org.bouncycastle.jce.provider.BouncyCastleProvider(), 1);
 
-        Namespace ns = parseArgs(args);
-        if (ns == null) {
-            System.exit(1);
-        }
-
-        int res = handleCommands(ns);
-        System.exit(res);
+        mContext = context;
+        mFileHome = mContext.getFilesDir();
     }
 
-    private static int handleCommands(Namespace ns) {
+    public int handleCommands(Namespace ns) {
         final String username = ns.getString("username");
         Manager m;
         Signal ts;
-        DBusConnection dBusConn = null;
         try {
-            if (ns.getBoolean("dbus") || ns.getBoolean("dbus_system")) {
-                try {
-                    m = null;
-                    int busType;
-                    if (ns.getBoolean("dbus_system")) {
-                        busType = DBusConnection.SYSTEM;
-                    } else {
-                        busType = DBusConnection.SESSION;
-                    }
-                    dBusConn = DBusConnection.getConnection(busType);
-                    ts = (Signal) dBusConn.getRemoteObject(
-                            SIGNAL_BUSNAME, SIGNAL_OBJECTPATH,
-                            Signal.class);
-                } catch (UnsatisfiedLinkError e) {
-                    System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
-                    return 1;
-                } catch (DBusException e) {
-                    e.printStackTrace();
-                    if (dBusConn != null) {
-                        dBusConn.disconnect();
-                    }
-                    return 3;
-                }
-            } else {
-                String settingsPath = ns.getString("config");
-                if (TextUtils.isEmpty(settingsPath)) {
-                    settingsPath = System.getProperty("user.home") + "/.config/signal";
-                    if (!new File(settingsPath).exists()) {
-                        String legacySettingsPath = System.getProperty("user.home") + "/.config/textsecure";
-                        if (new File(legacySettingsPath).exists()) {
-                            settingsPath = legacySettingsPath;
-                        }
-                    }
-                }
 
-                m = new Manager(username, settingsPath);
-                ts = m;
-                if (m.userExists()) {
-                    try {
-                        m.init();
-                    } catch (Exception e) {
-                        System.err.println("Error loading state file \"" + m.getFileName() + "\": " + e.getMessage());
-                        return 2;
-                    }
+            String settingsPath = mFileHome.getPath();
+
+            m = new Manager(username, settingsPath);
+            ts = m;
+            if (m.userExists()) {
+                try {
+                    m.init();
+                } catch (Exception e) {
+                    System.err.println("Error loading state file \"" + m.getFileName() + "\": " + e.getMessage());
+                    return 2;
                 }
             }
 
+
             switch (ns.getString("command")) {
                 case "register":
-                    if (dBusConn != null) {
-                        System.err.println("register is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.userHasKeys()) {
                         m.createNewIdentity();
                     }
@@ -151,10 +111,6 @@ public class Main {
                     }
                     break;
                 case "unregister":
-                    if (dBusConn != null) {
-                        System.err.println("unregister is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -167,10 +123,6 @@ public class Main {
                     }
                     break;
                 case "updateAccount":
-                    if (dBusConn != null) {
-                        System.err.println("updateAccount is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -183,10 +135,6 @@ public class Main {
                     }
                     break;
                 case "verify":
-                    if (dBusConn != null) {
-                        System.err.println("verify is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.userHasKeys()) {
                         System.err.println("User has no keys, first call register.");
                         return 1;
@@ -203,10 +151,6 @@ public class Main {
                     }
                     break;
                 case "link":
-                    if (dBusConn != null) {
-                        System.err.println("link is not yet implemented via dbus");
-                        return 1;
-                    }
 
                     // When linking, username is null and we always have to create keys
                     m.createNewIdentity();
@@ -237,10 +181,6 @@ public class Main {
                     }
                     break;
                 case "addDevice":
-                    if (dBusConn != null) {
-                        System.err.println("link is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -262,10 +202,6 @@ public class Main {
                     }
                     break;
                 case "listDevices":
-                    if (dBusConn != null) {
-                        System.err.println("listDevices is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -284,10 +220,6 @@ public class Main {
                     }
                     break;
                 case "removeDevice":
-                    if (dBusConn != null) {
-                        System.err.println("removeDevice is not yet implemented via dbus");
-                        return 1;
-                    }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -301,10 +233,6 @@ public class Main {
                     }
                     break;
                 case "send":
-                    if (dBusConn == null && !m.isRegistered()) {
-                        System.err.println("User is not registered.");
-                        return 1;
-                    }
 
                     if (ns.getBoolean("endsession")) {
                         if (ns.getList("recipient") == null) {
@@ -322,9 +250,6 @@ public class Main {
                             return 3;
                         } catch (AssertionError e) {
                             handleAssertionError(e);
-                            return 1;
-                        } catch (DBusExecutionException e) {
-                            handleDBusExecutionException(e);
                             return 1;
                         }
                     } else {
@@ -362,63 +287,18 @@ public class Main {
                         } catch (GroupNotFoundException e) {
                             handleGroupNotFoundException(e);
                             return 1;
-                        } catch (NotAGroupMemberException e) {
-                            handleNotAGroupMemberException(e);
-                            return 1;
                         } catch (AttachmentInvalidException e) {
                             System.err.println("Failed to add attachment: " + e.getMessage());
                             System.err.println("Aborting sending.");
                             return 1;
-                        } catch (DBusExecutionException e) {
-                            handleDBusExecutionException(e);
-                            return 1;
+                        } catch (NotAGroupMemberException e) {
+                            e.printStackTrace();
                         }
                     }
 
                     break;
                 case "receive":
-                    if (dBusConn != null) {
-                        try {
-                            dBusConn.addSigHandler(Signal.MessageReceived.class, new DBusSigHandler<Signal.MessageReceived>() {
-                                @Override
-                                public void handle(Signal.MessageReceived s) {
-                                    System.out.print(String.format("Envelope from: %s\nTimestamp: %s\nBody: %s\n",
-                                            s.getSender(), formatTimestamp(s.getTimestamp()), s.getMessage()));
-                                    if (s.getGroupId().length > 0) {
-                                        System.out.println("Group info:");
-                                        System.out.println("  Id: " + Base64.encodeBytes(s.getGroupId()));
-                                    }
-                                    if (s.getAttachments().size() > 0) {
-                                        System.out.println("Attachments: ");
-                                        for (String attachment : s.getAttachments()) {
-                                            System.out.println("-  Stored plaintext in: " + attachment);
-                                        }
-                                    }
-                                    System.out.println();
-                                }
-                            });
-                            dBusConn.addSigHandler(Signal.ReceiptReceived.class, new DBusSigHandler<Signal.ReceiptReceived>() {
-                                @Override
-                                public void handle(Signal.ReceiptReceived s) {
-                                    System.out.print(String.format("Receipt from: %s\nTimestamp: %s\n",
-                                            s.getSender(), formatTimestamp(s.getTimestamp())));
-                                }
-                            });
-                        } catch (UnsatisfiedLinkError e) {
-                            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
-                            return 1;
-                        } catch (DBusException e) {
-                            e.printStackTrace();
-                            return 1;
-                        }
-                        while (true) {
-                            try {
-                                Thread.sleep(10000);
-                            } catch (InterruptedException e) {
-                                return 0;
-                            }
-                        }
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -445,10 +325,7 @@ public class Main {
                     }
                     break;
                 case "quitGroup":
-                    if (dBusConn != null) {
-                        System.err.println("quitGroup is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -465,20 +342,12 @@ public class Main {
                     } catch (AssertionError e) {
                         handleAssertionError(e);
                         return 1;
-                    } catch (GroupNotFoundException e) {
-                        handleGroupNotFoundException(e);
-                        return 1;
-                    } catch (NotAGroupMemberException e) {
-                        handleNotAGroupMemberException(e);
-                        return 1;
+                    } catch (Exception e) {
+                        e.printStackTrace();
                     }
-
                     break;
                 case "updateGroup":
-                    if (dBusConn == null && !m.isRegistered()) {
-                        System.err.println("User is not registered.");
-                        return 1;
-                    }
+
 
                     try {
                         byte[] groupId = null;
@@ -507,7 +376,9 @@ public class Main {
                     } catch (IOException e) {
                         handleIOException(e);
                         return 3;
-                    } catch (AttachmentInvalidException e) {
+                    }
+
+                    /**catch (AttachmentInvalidException e) {
                         System.err.println("Failed to add avatar attachment for group\": " + e.getMessage());
                         System.err.println("Aborting sending.");
                         return 1;
@@ -517,17 +388,19 @@ public class Main {
                     } catch (NotAGroupMemberException e) {
                         handleNotAGroupMemberException(e);
                         return 1;
-                    } catch (EncapsulatedExceptions e) {
+                     **/
+                     catch (EncapsulatedExceptions e) {
                         handleEncapsulatedExceptions(e);
+                        return 3;
+                    }
+                    catch (Exception e) {
+                        e.printStackTrace();
                         return 3;
                     }
 
                     break;
                 case "listGroups":
-                    if (dBusConn != null) {
-                        System.err.println("listGroups is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -541,10 +414,7 @@ public class Main {
                     }
                     break;
                 case "listIdentities":
-                    if (dBusConn != null) {
-                        System.err.println("listIdentities is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -563,10 +433,7 @@ public class Main {
                     }
                     break;
                 case "trust":
-                    if (dBusConn != null) {
-                        System.err.println("trust is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -612,56 +479,18 @@ public class Main {
                     }
                     break;
                 case "daemon":
-                    if (dBusConn != null) {
-                        System.err.println("Stop it.");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
                     }
-                    DBusConnection conn = null;
-                    try {
-                        try {
-                            int busType;
-                            if (ns.getBoolean("system")) {
-                                busType = DBusConnection.SYSTEM;
-                            } else {
-                                busType = DBusConnection.SESSION;
-                            }
-                            conn = DBusConnection.getConnection(busType);
-                            conn.exportObject(SIGNAL_OBJECTPATH, m);
-                            conn.requestBusName(SIGNAL_BUSNAME);
-                        } catch (UnsatisfiedLinkError e) {
-                            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
-                            return 1;
-                        } catch (DBusException e) {
-                            e.printStackTrace();
-                            return 2;
-                        }
-                        ignoreAttachments = ns.getBoolean("ignore_attachments");
-                        try {
-                            m.receiveMessages(1, TimeUnit.HOURS, false, ignoreAttachments, new DbusReceiveMessageHandler(m, conn));
-                        } catch (IOException e) {
-                            System.err.println("Error while receiving messages: " + e.getMessage());
-                            return 3;
-                        } catch (AssertionError e) {
-                            handleAssertionError(e);
-                            return 1;
-                        }
-                    } finally {
-                        if (conn != null) {
-                            conn.disconnect();
-                        }
-                    }
+
 
                     break;
             }
             return 0;
         } finally {
-            if (dBusConn != null) {
-                dBusConn.disconnect();
-            }
+
         }
     }
 
@@ -692,21 +521,17 @@ public class Main {
     }
 
     private static void handleGroupNotFoundException(GroupNotFoundException e) {
-        System.err.println("Failed to send to group: " + e.getMessage());
+        System.err.println("Failed to send to group: " + e);
         System.err.println("Aborting sending.");
     }
 
     private static void handleNotAGroupMemberException(NotAGroupMemberException e) {
-        System.err.println("Failed to send to group: " + e.getMessage());
+        System.err.println("Failed to send to group: " + e);
         System.err.println("Update the group on another device to readd the user to this group.");
         System.err.println("Aborting sending.");
     }
 
 
-    private static void handleDBusExecutionException(DBusExecutionException e) {
-        System.err.println("Cannot connect to dbus: " + e.getMessage());
-        System.err.println("Aborting.");
-    }
 
     private static byte[] decodeGroupId(String groupId) {
         try {
@@ -1090,58 +915,7 @@ public class Main {
         }
     }
 
-    private static class DbusReceiveMessageHandler extends ReceiveMessageHandler {
-        final DBusConnection conn;
 
-        public DbusReceiveMessageHandler(Manager m, DBusConnection conn) {
-            super(m);
-            this.conn = conn;
-        }
-
-        @Override
-        public void handleMessage(SignalServiceEnvelope envelope, SignalServiceContent content, Throwable exception) {
-            super.handleMessage(envelope, content, exception);
-
-            if (envelope.isReceipt()) {
-                try {
-                    conn.sendSignal(new Signal.ReceiptReceived(
-                            SIGNAL_OBJECTPATH,
-                            envelope.getTimestamp(),
-                            envelope.getSource()
-                    ));
-                } catch (DBusException e) {
-                    e.printStackTrace();
-                }
-            } else if (content != null && content.getDataMessage().isPresent()) {
-                SignalServiceDataMessage message = content.getDataMessage().get();
-
-                if (!message.isEndSession() &&
-                        !(message.getGroupInfo().isPresent() &&
-                                message.getGroupInfo().get().getType() != SignalServiceGroup.Type.DELIVER)) {
-                    List<String> attachments = new ArrayList<>();
-                    if (message.getAttachments().isPresent()) {
-                        for (SignalServiceAttachment attachment : message.getAttachments().get()) {
-                            if (attachment.isPointer()) {
-                                attachments.add(m.getAttachmentFile(attachment.asPointer().getId()).getAbsolutePath());
-                            }
-                        }
-                    }
-
-                    try {
-                        conn.sendSignal(new Signal.MessageReceived(
-                                SIGNAL_OBJECTPATH,
-                                message.getTimestamp(),
-                                envelope.getSource(),
-                                message.getGroupInfo().isPresent() ? message.getGroupInfo().get().getGroupId() : new byte[0],
-                                message.getBody().isPresent() ? message.getBody().get() : "",
-                                attachments));
-                    } catch (DBusException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-    }
 
     private static class JsonReceiveMessageHandler implements Manager.ReceiveMessageHandler {
         final Manager m;
