@@ -61,13 +61,11 @@ import java.util.concurrent.TimeoutException;
 
 public class Main {
 
-    public static final String SIGNAL_BUSNAME = "org.asamk.Signal";
-    public static final String SIGNAL_OBJECTPATH = "/org/asamk/Signal";
-
     private static final TimeZone tzUTC = TimeZone.getTimeZone("UTC");
 
     private Context mContext;
     private File mFileHome;
+    private Manager m;
 
     public Main (Context context)
     {
@@ -75,18 +73,54 @@ public class Main {
         Security.insertProviderAt(new org.bouncycastle.jce.provider.BouncyCastleProvider(), 1);
 
         mContext = context;
-        mFileHome = mContext.getFilesDir();
+        mFileHome = new File(mContext.getFilesDir(),"Signal");
+        if (!mFileHome.exists())
+            mFileHome.mkdirs();
+    }
+
+    public boolean userExists (String username)
+    {
+        String settingsPath = mFileHome.getPath();
+        if (m == null)
+            m = new Manager(username, settingsPath);
+
+        boolean result = m.userExists();
+        return result;
+    }
+
+    public boolean isRegistered (String username)
+    {
+        String settingsPath = mFileHome.getPath();
+        if (m == null)
+            m = new Manager(username, settingsPath);
+
+        boolean result = m.isRegistered();
+        return result;
+    }
+
+    public void resetUser ()
+    {
+        deleteRecursive(mFileHome);
+    }
+
+    private void deleteRecursive(File fileOrDirectory) {
+        if (fileOrDirectory.isDirectory())
+            for (File child : fileOrDirectory.listFiles())
+                deleteRecursive(child);
+
+        fileOrDirectory.delete();
     }
 
     public int handleCommands(Namespace ns) {
         final String username = ns.getString("username");
-        Manager m;
         Signal ts;
         try {
 
             String settingsPath = mFileHome.getPath();
 
-            m = new Manager(username, settingsPath);
+            if (m == null)
+                m = new Manager(username, settingsPath);
+
             ts = m;
             if (m.userExists()) {
                 try {
