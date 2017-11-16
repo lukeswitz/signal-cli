@@ -44,7 +44,11 @@ public class Main {
         installSecurityProviderWorkaround();
 
         // Configuring the logger needs to happen before any logger is initialized
+    private static final TimeZone tzUTC = TimeZone.getTimeZone("UTC");
 
+    private Context mContext;
+    private File mFileHome;
+    private Manager m;
         final var nsLog = parseArgs(args);
         final var verboseLevel = nsLog == null ? 0 : nsLog.getInt("verbose");
         final var logFile = nsLog == null ? null : nsLog.<File>get("log-file");
@@ -53,8 +57,49 @@ public class Main {
 
         var parser = App.buildArgumentParser();
 
+        mContext = context;
+        mFileHome = new File(mContext.getFilesDir(),"Signal");
+        if (!mFileHome.exists())
+            mFileHome.mkdirs();
+    }
         var ns = parser.parseArgsOrFail(args);
 
+    public boolean userExists (String username)
+    {
+        String settingsPath = mFileHome.getPath();
+        if (m == null)
+            m = new Manager(username, settingsPath);
+
+        boolean result = m.userExists();
+        return result;
+    }
+
+    public boolean isRegistered (String username)
+    {
+        String settingsPath = mFileHome.getPath();
+        if (m == null)
+            m = new Manager(username, settingsPath);
+
+        boolean result = m.isRegistered();
+        return result;
+    }
+
+    public void resetUser ()
+    {
+        deleteRecursive(mFileHome);
+    }
+
+    private void deleteRecursive(File fileOrDirectory) {
+        if (fileOrDirectory.isDirectory())
+            for (File child : fileOrDirectory.listFiles())
+                deleteRecursive(child);
+
+        fileOrDirectory.delete();
+    }
+
+    public int handleCommands(Namespace ns) {
+        final String username = ns.getString("username");
+        Signal ts;
         int status = 0;
         try {
             new App(ns).init();

@@ -106,7 +106,7 @@ class Manager implements Signal {
     private final String avatarsPath;
 
     private FileChannel fileChannel;
-    private FileLock lock;
+  //  private FileLock lock;
 
     private final ObjectMapper jsonProcessor = new ObjectMapper();
     private String username;
@@ -190,9 +190,7 @@ class Manager implements Signal {
     private static void createPrivateDirectories(String path) throws IOException {
         final File file = new File(path);
         try {
-//            Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
             file.mkdirs();
-            //Files.createDirectories(file, PosixFilePermissions.asFileAttribute(perms));
         } catch (UnsupportedOperationException e) {
            // Files.createDirectories(file);
         }
@@ -201,11 +199,12 @@ class Manager implements Signal {
     private static void createPrivateFile(String path) throws IOException {
         final File file = new File(path);
         try {
-        //    Set<PosixFilePermission> perms = EnumSet.of(OWNER_READ, OWNER_WRITE);
-           // Files.createFile(file, PosixFilePermissions.asFileAttribute(perms));
-            file.mkdirs();
+            if (file.isDirectory())
+                file.delete();
+            file.setWritable(true);
+            file.getParentFile().mkdirs();
         } catch (UnsupportedOperationException e) {
-          //  Files.createFile(file);
+            e.printStackTrace();
         }
     }
 
@@ -235,16 +234,18 @@ class Manager implements Signal {
             return;
 
         createPrivateDirectories(dataPath);
-        if (!new File(getFileName()).exists()) {
+        File fileStore = new File(getFileName());
+        if ((!fileStore.exists())||fileStore.isDirectory()) {
             createPrivateFile(getFileName());
         }
         fileChannel = new RandomAccessFile(new File(getFileName()), "rw").getChannel();
+        /**
         lock = fileChannel.tryLock();
         if (lock == null) {
             System.err.println("Config file is in use by another instance, waiting…");
             lock = fileChannel.lock();
             System.err.println("Config file lock acquired.");
-        }
+        }**/
     }
 
     public void init() throws IOException {
@@ -901,6 +902,8 @@ class Manager implements Signal {
             throws EncapsulatedExceptions, IOException {
         Set<SignalServiceAddress> recipientsTS = getSignalServiceAddresses(recipients);
         if (recipientsTS == null) return;
+        if (threadStore == null)
+            throw new IOException("Thread store is not yet initiated");
 
         SignalServiceDataMessage message = null;
         try {
