@@ -1,15 +1,27 @@
 apply plugin: 'com.android.library'
 
-sourceCompatibility = JavaVersion.VERSION_1_7
-targetCompatibility = JavaVersion.VERSION_1_7
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:3.0.0'
+    }
+}
+
 
 android {
-    compileSdkVersion project.ext.compileSdkVersion
-    buildToolsVersion project.ext.buildToolsVersion
+
+    project.ext {
+        appcompat='com.android.support:appcompat-v7:25.2.0'
+    }
+
+    compileSdkVersion 25
+    buildToolsVersion '26.0.2'
 
     defaultConfig {
-        minSdkVersion project.ext.minSdkVersion
-        targetSdkVersion project.ext.targetSdkVersion
+        minSdkVersion 16
+        targetSdkVersion 25
     }
 
     buildTypes {
@@ -38,7 +50,7 @@ repositories {
 
 dependencies {
     compile 'com.github.turasa:signal-service-java:2.6.5_unofficial_1'
-    compile 'org.bouncycastle:bcprov-jdk15on:1.55'
+    compile 'org.bouncycastle:bcprov-jdk15on:1.57'
     compile 'net.sourceforge.argparse4j:argparse4j:0.7.0'
 }
 
