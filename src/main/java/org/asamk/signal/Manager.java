@@ -1551,9 +1551,9 @@ class Manager implements Signal {
                     // TODO include profile key
                     out.write(new DeviceContact(record.number, Optional.fromNullable(record.name),
                             createContactAvatarAttachment(record.number), Optional.fromNullable(record.color),
-                            Optional.fromNullable(verifiedMessage), Optional.<byte[]>absent()));
+                            Optional.fromNullable(verifiedMessage), Optional.<byte[]>absent(), false, Optional.fromNullable(info != null ? info.messageExpirationTime : null)));
+                }
 
-            }
 
             if (contactsFile.exists() && contactsFile.length() > 0) {
                     FileInputStream contactsFileStream = new FileInputStream(contactsFile);
