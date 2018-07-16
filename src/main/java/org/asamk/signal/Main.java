@@ -172,10 +172,7 @@ public class Main {
                     }
                     break;
                 case "setPin":
-                    if (dBusConn != null) {
-                        System.err.println("setPin is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -189,10 +186,7 @@ public class Main {
                     }
                     break;
                 case "removePin":
-                    if (dBusConn != null) {
-                        System.err.println("removePin is not yet implemented via dbus");
-                        return 1;
-                    }
+
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
                         return 1;
@@ -554,48 +548,7 @@ public class Main {
                         }
                     }
                     break;
-                case "daemon":
 
-                    if (!m.isRegistered()) {
-                        System.err.println("User is not registered.");
-                        return 1;
-                    }
-                    DBusConnection conn = null;
-                    try {
-                        try {
-                            int busType;
-                            if (ns.getBoolean("system")) {
-                                busType = DBusConnection.SYSTEM;
-                            } else {
-                                busType = DBusConnection.SESSION;
-                            }
-                            conn = DBusConnection.getConnection(busType);
-                            conn.exportObject(SIGNAL_OBJECTPATH, m);
-                            conn.requestBusName(SIGNAL_BUSNAME);
-                        } catch (UnsatisfiedLinkError e) {
-                            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
-                            return 1;
-                        } catch (DBusException e) {
-                            e.printStackTrace();
-                            return 2;
-                        }
-                        ignoreAttachments = ns.getBoolean("ignore_attachments");
-                        try {
-                            m.receiveMessages(1, TimeUnit.HOURS, false, ignoreAttachments, ns.getBoolean("json") ? new JsonDbusReceiveMessageHandler(m, conn) : new DbusReceiveMessageHandler(m, conn));
-                        } catch (IOException e) {
-                            System.err.println("Error while receiving messages: " + e.getMessage());
-                            return 3;
-                        } catch (AssertionError e) {
-                            handleAssertionError(e);
-                            return 1;
-                        }
-                    } finally {
-                        if (conn != null) {
-                            conn.disconnect();
-                        }
-                    }
-
-                    break;
             }
             return 0;
         } finally {
@@ -1133,59 +1086,6 @@ public class Main {
                 System.out.println();
             } catch (IOException e) {
                 e.printStackTrace();
-            }
-        }
-    }
-
-    private static class JsonDbusReceiveMessageHandler extends JsonReceiveMessageHandler {
-        final DBusConnection conn;
-
-        public JsonDbusReceiveMessageHandler(Manager m, DBusConnection conn) {
-            super(m);
-            this.conn = conn;
-        }
-
-        @Override
-        public void handleMessage(SignalServiceEnvelope envelope, SignalServiceContent content, Throwable exception) {
-            super.handleMessage(envelope, content, exception);
-
-            if (envelope.isReceipt()) {
-                try {
-                    conn.sendSignal(new Signal.ReceiptReceived(
-                            SIGNAL_OBJECTPATH,
-                            envelope.getTimestamp(),
-                            envelope.getSource()
-                    ));
-                } catch (DBusException e) {
-                    e.printStackTrace();
-                }
-            } else if (content != null && content.getDataMessage().isPresent()) {
-                SignalServiceDataMessage message = content.getDataMessage().get();
-
-                if (!message.isEndSession() &&
-                        !(message.getGroupInfo().isPresent() &&
-                                message.getGroupInfo().get().getType() != SignalServiceGroup.Type.DELIVER)) {
-                    List<String> attachments = new ArrayList<>();
-                    if (message.getAttachments().isPresent()) {
-                        for (SignalServiceAttachment attachment : message.getAttachments().get()) {
-                            if (attachment.isPointer()) {
-                                attachments.add(m.getAttachmentFile(attachment.asPointer().getId()).getAbsolutePath());
-                            }
-                        }
-                    }
-
-                    try {
-                        conn.sendSignal(new Signal.MessageReceived(
-                                SIGNAL_OBJECTPATH,
-                                message.getTimestamp(),
-                                envelope.getSource(),
-                                message.getGroupInfo().isPresent() ? message.getGroupInfo().get().getGroupId() : new byte[0],
-                                message.getBody().isPresent() ? message.getBody().get() : "",
-                                attachments));
-                    } catch (DBusException e) {
-                        e.printStackTrace();
-                    }
-                }
             }
         }
     }
