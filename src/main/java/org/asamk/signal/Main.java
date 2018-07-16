@@ -35,14 +35,17 @@ import org.asamk.signal.storage.groups.GroupInfo;
 import org.asamk.signal.storage.protocol.JsonIdentityKeyStore;
 import org.asamk.signal.util.Hex;
 import org.whispersystems.libsignal.InvalidKeyException;
+import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.*;
+import org.whispersystems.signalservice.api.messages.calls.*;
 import org.whispersystems.signalservice.api.messages.multidevice.*;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.EncapsulatedExceptions;
 import org.whispersystems.signalservice.api.push.exceptions.NetworkFailureException;
 import org.whispersystems.signalservice.api.push.exceptions.UnregisteredUserException;
 import org.whispersystems.signalservice.api.util.PhoneNumberFormatter;
+import org.whispersystems.signalservice.internal.push.LockedException;
 import org.whispersystems.signalservice.internal.util.Base64;
 
 import java.io.File;
@@ -168,6 +171,39 @@ public class Main {
                         return 3;
                     }
                     break;
+                case "setPin":
+                    if (dBusConn != null) {
+                        System.err.println("setPin is not yet implemented via dbus");
+                        return 1;
+                    }
+                    if (!m.isRegistered()) {
+                        System.err.println("User is not registered.");
+                        return 1;
+                    }
+                    try {
+                        String registrationLockPin = ns.getString("registrationLockPin");
+                        m.setRegistrationLockPin(Optional.of(registrationLockPin));
+                    } catch (IOException e) {
+                        System.err.println("Set pin error: " + e.getMessage());
+                        return 3;
+                    }
+                    break;
+                case "removePin":
+                    if (dBusConn != null) {
+                        System.err.println("removePin is not yet implemented via dbus");
+                        return 1;
+                    }
+                    if (!m.isRegistered()) {
+                        System.err.println("User is not registered.");
+                        return 1;
+                    }
+                    try {
+                        m.setRegistrationLockPin(Optional.<String>absent());
+                    } catch (IOException e) {
+                        System.err.println("Remove pin error: " + e.getMessage());
+                        return 3;
+                    }
+                    break;
                 case "verify":
                     if (!m.userHasKeys()) {
                         System.err.println("User has no keys, first call register.");
@@ -178,7 +214,13 @@ public class Main {
                         return 1;
                     }
                     try {
-                        m.verifyAccount(ns.getString("verificationCode"));
+                        String verificationCode = ns.getString("verificationCode");
+                        String pin = ns.getString("pin");
+                        m.verifyAccount(verificationCode, pin);
+                    } catch (LockedException e) {
+                        System.err.println("Verification failed! This number is locked with a pin. Hours remaining until reset: " + (e.getTimeRemaining() / 1000 / 60 / 60));
+                        System.err.println("Use '--pin PIN_CODE' to specify the registration lock PIN");
+                        return 3;
                     } catch (IOException e) {
                         System.err.println("Verify error: " + e.getMessage());
                         return 3;
@@ -518,7 +560,40 @@ public class Main {
                         System.err.println("User is not registered.");
                         return 1;
                     }
-
+                    DBusConnection conn = null;
+                    try {
+                        try {
+                            int busType;
+                            if (ns.getBoolean("system")) {
+                                busType = DBusConnection.SYSTEM;
+                            } else {
+                                busType = DBusConnection.SESSION;
+                            }
+                            conn = DBusConnection.getConnection(busType);
+                            conn.exportObject(SIGNAL_OBJECTPATH, m);
+                            conn.requestBusName(SIGNAL_BUSNAME);
+                        } catch (UnsatisfiedLinkError e) {
+                            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
+                            return 1;
+                        } catch (DBusException e) {
+                            e.printStackTrace();
+                            return 2;
+                        }
+                        ignoreAttachments = ns.getBoolean("ignore_attachments");
+                        try {
+                            m.receiveMessages(1, TimeUnit.HOURS, false, ignoreAttachments, ns.getBoolean("json") ? new JsonDbusReceiveMessageHandler(m, conn) : new DbusReceiveMessageHandler(m, conn));
+                        } catch (IOException e) {
+                            System.err.println("Error while receiving messages: " + e.getMessage());
+                            return 3;
+                        } catch (AssertionError e) {
+                            handleAssertionError(e);
+                            return 1;
+                        }
+                    } finally {
+                        if (conn != null) {
+                            conn.disconnect();
+                        }
+                    }
 
                     break;
             }
@@ -579,7 +654,8 @@ public class Main {
     }
 
     private static Namespace parseArgs(String[] args) {
-        ArgumentParser parser = ArgumentParsers.newArgumentParser("signal-cli")
+        ArgumentParser parser = ArgumentParsers.newFor("signal-cli")
+                .build()
                 .defaultHelp(true)
                 .description("Commandline interface for Signal.")
                 .version(Manager.PROJECT_NAME + " " + Manager.PROJECT_VERSION);
@@ -634,9 +710,17 @@ public class Main {
         Subparser parserUpdateAccount = subparsers.addParser("updateAccount");
         parserUpdateAccount.help("Update the account attributes on the signal server.");
 
+        Subparser parserSetPin = subparsers.addParser("setPin");
+        parserSetPin.addArgument("registrationLockPin")
+                .help("The registration lock PIN, that will be required for new registrations (resets after 7 days of inactivity)");
+
+        Subparser parserRemovePin = subparsers.addParser("removePin");
+
         Subparser parserVerify = subparsers.addParser("verify");
         parserVerify.addArgument("verificationCode")
                 .help("The verification code you received via sms or voice call.");
+        parserVerify.addArgument("-p", "--pin")
+                .help("The registration lock PIN, that was set by the user (Optional)");
 
         Subparser parserSend = subparsers.addParser("send");
         parserSend.addArgument("-g", "--group")
@@ -706,6 +790,9 @@ public class Main {
                 .help("Use DBus system bus instead of user bus.");
         parserDaemon.addArgument("--ignore-attachments")
                 .help("Don’t download attachments of received messages.")
+                .action(Arguments.storeTrue());
+        parserDaemon.addArgument("--json")
+                .help("Output received messages in json format, one json object per line.")
                 .action(Arguments.storeTrue());
 
         try {
@@ -876,6 +963,54 @@ public class Main {
                             String safetyNumber = formatSafetyNumber(m.computeSafetyNumber(verifiedMessage.getDestination(), verifiedMessage.getIdentityKey()));
                             System.out.println("   " + safetyNumber);
                         }
+                        if (syncMessage.getConfiguration().isPresent()) {
+                            System.out.println("Received sync message with configuration:");
+                            final ConfigurationMessage configurationMessage = syncMessage.getConfiguration().get();
+                            if (configurationMessage.getReadReceipts().isPresent()) {
+                                System.out.println(" - Read receipts: " + (configurationMessage.getReadReceipts().get() ? "enabled" : "disabled"));
+                            }
+                        }
+                    }
+                    if (content.getCallMessage().isPresent()) {
+                        System.out.println("Received a call message");
+                        SignalServiceCallMessage callMessage = content.getCallMessage().get();
+                        if (callMessage.getAnswerMessage().isPresent()) {
+                            AnswerMessage answerMessage = callMessage.getAnswerMessage().get();
+                            System.out.println("Answer message: " + answerMessage.getId() + ": " + answerMessage.getDescription());
+                        }
+                        if (callMessage.getBusyMessage().isPresent()) {
+                            BusyMessage busyMessage = callMessage.getBusyMessage().get();
+                            System.out.println("Busy message: " + busyMessage.getId());
+                        }
+                        if (callMessage.getHangupMessage().isPresent()) {
+                            HangupMessage hangupMessage = callMessage.getHangupMessage().get();
+                            System.out.println("Hangup message: " + hangupMessage.getId());
+                        }
+                        if (callMessage.getIceUpdateMessages().isPresent()) {
+                            List<IceUpdateMessage> iceUpdateMessages = callMessage.getIceUpdateMessages().get();
+                            for (IceUpdateMessage iceUpdateMessage : iceUpdateMessages) {
+                                System.out.println("Ice update message: " + iceUpdateMessage.getId() + ", sdp: " + iceUpdateMessage.getSdp());
+                            }
+                        }
+                        if (callMessage.getOfferMessage().isPresent()) {
+                            OfferMessage offerMessage = callMessage.getOfferMessage().get();
+                            System.out.println("Offer message: " + offerMessage.getId() + ": " + offerMessage.getDescription());
+                        }
+                    }
+                    if (content.getReceiptMessage().isPresent()) {
+                        System.out.println("Received a receipt message");
+                        SignalServiceReceiptMessage receiptMessage = content.getReceiptMessage().get();
+                        System.out.println(" - When: " + formatTimestamp(receiptMessage.getWhen()));
+                        if (receiptMessage.isDeliveryReceipt()) {
+                            System.out.println(" - Is delivery receipt");
+                        }
+                        if (receiptMessage.isReadReceipt()) {
+                            System.out.println(" - Is read receipt");
+                        }
+                        System.out.println(" - Timestamps:");
+                        for (long timestamp : receiptMessage.getTimestamps()) {
+                            System.out.println("    " + formatTimestamp(timestamp));
+                        }
                     }
                 }
             } else {
@@ -924,6 +1059,25 @@ public class Main {
             if (message.getExpiresInSeconds() > 0) {
                 System.out.println("Expires in: " + message.getExpiresInSeconds() + " seconds");
             }
+            if (message.isProfileKeyUpdate() && message.getProfileKey().isPresent()) {
+                System.out.println("Profile key update, key length:" + message.getProfileKey().get().length);
+            }
+
+            if (message.getQuote().isPresent()) {
+                SignalServiceDataMessage.Quote quote = message.getQuote().get();
+                System.out.println("Quote: (" + quote.getId() + ")");
+                System.out.println(" Author: " + quote.getAuthor().getNumber());
+                System.out.println(" Text: " + quote.getText());
+                if (quote.getAttachments().size() > 0) {
+                    System.out.println(" Attachments: ");
+                    for (SignalServiceDataMessage.Quote.QuotedAttachment attachment : quote.getAttachments()) {
+                        System.out.println("  Filename: " + attachment.getFileName());
+                        System.out.println("  Type: " + attachment.getContentType());
+                        System.out.println("  Thumbnail:");
+                        printAttachment(attachment.getThumbnail());
+                    }
+                }
+            }
 
             if (message.getAttachments().isPresent()) {
                 System.out.println("Attachments: ");
@@ -941,6 +1095,7 @@ public class Main {
                 System.out.println("  Filename: " + (pointer.getFileName().isPresent() ? pointer.getFileName().get() : "-"));
                 System.out.println("  Size: " + (pointer.getSize().isPresent() ? pointer.getSize().get() + " bytes" : "<unavailable>") + (pointer.getPreview().isPresent() ? " (Preview is available: " + pointer.getPreview().get().length + " bytes)" : ""));
                 System.out.println("  Voice note: " + (pointer.getVoiceNote() ? "yes" : "no"));
+                System.out.println("  Dimensions: " + pointer.getWidth() + "x" + pointer.getHeight());
                 File file = m.getAttachmentFile(pointer.getId());
                 if (file.exists()) {
                     System.out.println("  Stored plaintext in: " + file);
@@ -978,6 +1133,59 @@ public class Main {
                 System.out.println();
             } catch (IOException e) {
                 e.printStackTrace();
+            }
+        }
+    }
+
+    private static class JsonDbusReceiveMessageHandler extends JsonReceiveMessageHandler {
+        final DBusConnection conn;
+
+        public JsonDbusReceiveMessageHandler(Manager m, DBusConnection conn) {
+            super(m);
+            this.conn = conn;
+        }
+
+        @Override
+        public void handleMessage(SignalServiceEnvelope envelope, SignalServiceContent content, Throwable exception) {
+            super.handleMessage(envelope, content, exception);
+
+            if (envelope.isReceipt()) {
+                try {
+                    conn.sendSignal(new Signal.ReceiptReceived(
+                            SIGNAL_OBJECTPATH,
+                            envelope.getTimestamp(),
+                            envelope.getSource()
+                    ));
+                } catch (DBusException e) {
+                    e.printStackTrace();
+                }
+            } else if (content != null && content.getDataMessage().isPresent()) {
+                SignalServiceDataMessage message = content.getDataMessage().get();
+
+                if (!message.isEndSession() &&
+                        !(message.getGroupInfo().isPresent() &&
+                                message.getGroupInfo().get().getType() != SignalServiceGroup.Type.DELIVER)) {
+                    List<String> attachments = new ArrayList<>();
+                    if (message.getAttachments().isPresent()) {
+                        for (SignalServiceAttachment attachment : message.getAttachments().get()) {
+                            if (attachment.isPointer()) {
+                                attachments.add(m.getAttachmentFile(attachment.asPointer().getId()).getAbsolutePath());
+                            }
+                        }
+                    }
+
+                    try {
+                        conn.sendSignal(new Signal.MessageReceived(
+                                SIGNAL_OBJECTPATH,
+                                message.getTimestamp(),
+                                envelope.getSource(),
+                                message.getGroupInfo().isPresent() ? message.getGroupInfo().get().getGroupId() : new byte[0],
+                                message.getBody().isPresent() ? message.getBody().get() : "",
+                                attachments));
+                    } catch (DBusException e) {
+                        e.printStackTrace();
+                    }
+                }
             }
         }
     }

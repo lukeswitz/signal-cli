@@ -112,6 +112,7 @@ class Manager implements Signal {
     private String username;
     private int deviceId = SignalServiceAddress.DEFAULT_DEVICE_ID;
     private String password;
+    private String registrationLockPin;
     private String signalingKey;
     private int preKeyIdOffset;
     private int nextSignedPreKeyId;
@@ -274,6 +275,8 @@ class Manager implements Signal {
         }
         username = getNotNullNode(rootNode, "username").asText();
         password = getNotNullNode(rootNode, "password").asText();
+        JsonNode pinNode = rootNode.get("registrationLockPin");
+        registrationLockPin = pinNode == null ? null : pinNode.asText();
         if (rootNode.has("signalingKey")) {
             signalingKey = getNotNullNode(rootNode, "signalingKey").asText();
         }
@@ -342,6 +345,7 @@ class Manager implements Signal {
         rootNode.put("username", username)
                 .put("deviceId", deviceId)
                 .put("password", password)
+                .put("registrationLockPin", registrationLockPin)
                 .put("signalingKey", signalingKey)
                 .put("preKeyIdOffset", preKeyIdOffset)
                 .put("nextSignedPreKeyId", nextSignedPreKeyId)
@@ -390,7 +394,7 @@ class Manager implements Signal {
     }
 
     public void updateAccountAttributes() throws IOException {
-        accountManager.setAccountAttributes(signalingKey, signalProtocolStore.getLocalRegistrationId(), true);
+        accountManager.setAccountAttributes(signalingKey, signalProtocolStore.getLocalRegistrationId(), true, registrationLockPin);
     }
 
     public void unregister() throws IOException {
@@ -520,16 +524,26 @@ class Manager implements Signal {
         }
     }
 
-    public void verifyAccount(String verificationCode) throws IOException {
+    public void verifyAccount(String verificationCode, String pin) throws IOException {
         verificationCode = verificationCode.replace("-", "");
         signalingKey = Util.getSecret(52);
-        accountManager.verifyAccountWithCode(verificationCode, signalingKey, signalProtocolStore.getLocalRegistrationId(), true);
+        accountManager.verifyAccountWithCode(verificationCode, signalingKey, signalProtocolStore.getLocalRegistrationId(), true, pin);
 
         //accountManager.setGcmId(Optional.of(GoogleCloudMessaging.getInstance(this).register(REGISTRATION_ID)));
         registered = true;
+        registrationLockPin = pin;
 
         refreshPreKeys();
         save();
+    }
+
+    public void setRegistrationLockPin(Optional<String> pin) throws IOException {
+        accountManager.setPin(pin);
+        if (pin.isPresent()) {
+            registrationLockPin = pin.get();
+        } else {
+            registrationLockPin = null;
+        }
     }
 
     private void refreshPreKeys() throws IOException {
@@ -571,7 +585,7 @@ class Manager implements Signal {
             mime = "application/octet-stream";
         }
         // TODO mabybe add a parameter to set the voiceNote and preview option
-        return new SignalServiceAttachmentStream(attachmentStream, mime, attachmentSize, Optional.of(attachmentFile.getName()), false, Optional.<byte[]>absent(), null);
+        return new SignalServiceAttachmentStream(attachmentStream, mime, attachmentSize, Optional.of(attachmentFile.getName()), false, Optional.<byte[]>absent(), 0, 0, null);
     }
 
     private Optional<SignalServiceAttachmentStream> createGroupAvatarAttachment(byte[] groupId) throws IOException {
@@ -827,6 +841,16 @@ class Manager implements Signal {
         contact.name = name;
         contactStore.updateContact(contact);
         save();
+    }
+
+    @Override
+    public List<byte[]> getGroupIds() {
+        List<GroupInfo> groups = getGroups();
+        List<byte[]> ids = new ArrayList<byte[]>(groups.size());
+        for (GroupInfo group : groups) {
+          ids.add(group.groupId);
+        }
+        return ids;
     }
 
     @Override
@@ -1143,7 +1167,7 @@ class Manager implements Signal {
 
     public void receiveMessages(long timeout, TimeUnit unit, boolean returnOnTimeout, boolean ignoreAttachments, ReceiveMessageHandler handler) throws IOException {
         retryFailedReceivedMessages(handler, ignoreAttachments);
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT);
+        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT, null);
 
         try {
             if (messagePipe == null) {
@@ -1450,7 +1474,7 @@ class Manager implements Signal {
             }
         }
 
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT);
+        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT, null);
 
         File tmpFile = Util.createTempFile();
         try  {
@@ -1479,7 +1503,7 @@ class Manager implements Signal {
     }
 
     private InputStream retrieveAttachmentAsStream(SignalServiceAttachmentPointer pointer, File tmpFile) throws IOException, InvalidMessageException {
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT);
+        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(serviceConfiguration, username, password, deviceId, signalingKey, USER_AGENT, null);
         return messageReceiver.retrieveAttachment(pointer, tmpFile, MAX_ATTACHMENT_SIZE);
     }
 
@@ -1501,9 +1525,10 @@ class Manager implements Signal {
                 OutputStream fos = new FileOutputStream(groupsFile);
                 DeviceGroupsOutputStream out = new DeviceGroupsOutputStream(fos);
                 for (GroupInfo record : groupStore.getGroups()) {
+                    ThreadInfo info = threadStore.getThread(Base64.encodeBytes(record.groupId));
                     out.write(new DeviceGroup(record.groupId, Optional.fromNullable(record.name),
                             new ArrayList<>(record.members), createGroupAvatarAttachment(record.groupId),
-                            record.active));
+                            record.active, Optional.fromNullable(info != null ? info.messageExpirationTime : null)));
                 }
 
 
@@ -1536,6 +1561,7 @@ class Manager implements Signal {
                 DeviceContactsOutputStream out = new DeviceContactsOutputStream(fos);
                 for (ContactInfo record : contactStore.getContacts()) {
                     VerifiedMessage verifiedMessage = null;
+                    ThreadInfo info = threadStore.getThread(record.number);
                     if (getIdentities().containsKey(record.number)) {
                         JsonIdentityKeyStore.Identity currentIdentity = null;
                         for (JsonIdentityKeyStore.Identity id : getIdentities().get(record.number)) {
@@ -1551,8 +1577,8 @@ class Manager implements Signal {
                     // TODO include profile key
                     out.write(new DeviceContact(record.number, Optional.fromNullable(record.name),
                             createContactAvatarAttachment(record.number), Optional.fromNullable(record.color),
-                            Optional.fromNullable(verifiedMessage), Optional.<byte[]>absent()));
-
+                            Optional.fromNullable(verifiedMessage), Optional.<byte[]>absent(), false, Optional.fromNullable(info != null ? info.messageExpirationTime : null)));
+                }
             }
 
             if (contactsFile.exists() && contactsFile.length() > 0) {

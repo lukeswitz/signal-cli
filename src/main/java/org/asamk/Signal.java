@@ -21,6 +21,8 @@ public interface Signal {
 
     void setContactName(String number, String name);
 
+    List<byte[]> getGroupIds();
+
     String getGroupName(byte[] groupId);
 
     List<String> getGroupMembers(byte[] groupId);
